@@ -1,0 +1,77 @@
+function recordAttendance(data) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName('出席記録');
+    if (!sheet) {
+      sheet = ss.insertSheet('出席記録');
+      sheet.appendRow(['打刻日時', '日付', '氏名', 'パート', '状態', '備考']);
+    }
+    
+    var now = new Date();
+    var todayYmd = Utilities.formatDate(now, "JST", "yyyy/MM/dd");
+    var members = getMemberList();
+    var matchedName = data.name;
+    var matchedPart = data.part || "";
+    
+    // QR_IDがある場合はIDから特定、なければ氏名で特定
+    if (data.qrId) {
+      var mByQr = getMemberByQrId(data.qrId);
+      if (mByQr) {
+        matchedName = mByQr.name;
+        matchedPart = mByQr.part;
+      }
+    } else {
+      members.forEach(function(m) {
+        if (normalizeName(m.name) === normalizeName(data.name)) {
+          matchedName = m.name;
+          matchedPart = m.part;
+        }
+      });
+    }
+
+    var rows = sheet.getDataRange().getValues();
+    var targetRowIndex = -1;
+    var normMatchedName = normalizeName(matchedName);
+    var remarkText = data.qrId ? "QR打刻(更新)" : "WEB打刻(更新)";
+
+    // 当日の同じ氏名かつ同じ状態（または全状態の上書きにしたい場合は「&& rows[i][4] === data.type」を外す）の記録を検索
+    for (var i = 1; i < rows.length; i++) {
+      if (!rows[i][0] || !rows[i][1]) continue;
+      
+      var rowDate = "";
+      if (Object.prototype.toString.call(rows[i][1]) === '[object Date]') {
+        rowDate = Utilities.formatDate(rows[i][1], "JST", "yyyy/MM/dd");
+      } else {
+        rowDate = String(rows[i][1]).trim();
+      }
+
+      var rowName = normalizeName(rows[i][2]);
+      
+      // 当日かつ同じ人の既存記録があればその行番号を取得
+      if (rowDate === todayYmd && rowName === normMatchedName) {
+        targetRowIndex = i + 1; // スプレッドシートの行番号（1始まり）
+        break;
+      }
+    }
+
+    if (targetRowIndex > -1) {
+      // 既存の記録がある場合は上書き更新
+      sheet.getRange(targetRowIndex, 1, 1, 6).setValues([[
+        now, 
+        todayYmd, 
+        matchedName, 
+        matchedPart, 
+        data.type, 
+        remarkText
+      ]]);
+      return { status: "success", message: matchedName + "さんの「" + data.type + "」記録を上書き更新しました。" };
+    } else {
+      // 既存記録がない場合は新規追加
+      sheet.appendRow([now, todayYmd, matchedName, matchedPart, data.type, data.qrId ? "QR打刻" : "WEB打刻"]);
+      return { status: "success", message: matchedName + "さんの「" + data.type + "」を記録しました。" };
+    }
+
+  } catch (e) {
+    return { status: "error", message: e.message };
+  }
+}
